@@ -4,6 +4,9 @@ import time
 
 TIMEOUT_SEC = 60
 SOCKET_TICK = 20
+FAILURE_LIMIT = 3          
+CLEANUP_INTERVAL_SEC = 5  
+
 
 #主の流れ
 def start_udp(state: dict):
@@ -13,27 +16,84 @@ def start_udp(state: dict):
     server_port = 9001
 
     sock.bind((server_address, server_port))
-    sock.settimeout(SOCKET_TICK)
+    sock.settimeout(1.0)
+    state.setdefault("failures", {})
+    last_cleanup = time.monotonic()
+
 
     while True:
-        print('\nwaiting to receive message')
+        #print('\nwaiting to receive message')
+
+        now = time.monotonic()
+        if now - last_cleanup >= CLEANUP_INTERVAL_SEC:
+            cleanup_timeouts(state, sock)
+            last_cleanup = now
 
         try:
             data, address = sock.recvfrom(4096)
             
         except socket.timeout:
-            cleanup_timeouts(state)
             continue
             
         parsed = parse_from_client(data)
         if parsed is None:
             continue
 
-        room_name, token, message = parsed
+        room_name, token, message = parsed        
         state.setdefault("last_seen", {})[token] = time.monotonic()
+        
+        
+        failures = state.setdefault("failures", {})
+        token_ip = state.setdefault("token_ip", {})   
+        saved = token_ip.get(token)
+
+        if saved is None:
+            if message != "@join":
+                failures[token] = failures.get(token, 0) + 1
+                if failures[token] >= FAILURE_LIMIT:
+                    kick_token(state, sock, token, "failure")
+                continue
+            token_ip[token] = address
+            failures[token] = 0
+        else:
+        # IP不一致は失敗（要件）→ 必ずここで終わる
+            if saved[0] != address[0]:
+                failures[token] = failures.get(token, 0) + 1
+                if failures[token] >= FAILURE_LIMIT:
+                    kick_token(state, sock, token, "failure")
+                continue
+
+            # IP一致なら成功：失敗回数リセット＆最新port更新
+            failures[token] = 0
+            token_ip[token] = address
+
+
+        rooms = state.get("rooms", {})
+        room = rooms.get(room_name)
+        if room is None:
+            continue
+
+        if message == "@join":
+            room.setdefault("members",set()).add(token)
+            state.setdefault("token_ip", {})[token] = address
+            state.setdefault("failures", {})[token] = 0
+            continue
 
         if not check_room_host(state, room_name):
             continue
+
+        members = room.get("members", set())
+
+        #サーバー→クライアントへ
+        sender = state.get("token_user", {}).get(token, token)
+        out = f"{sender}: {message}".encode("utf-8")
+
+        for t in members:
+            if t == token:
+                continue
+            addr = state.get("token_ip", {}).get(t) 
+            if addr:
+                sock.sendto(out, addr)
 
 
 
@@ -70,7 +130,7 @@ def check_room_host(state: dict, room_name: str) -> bool:
     return host is not None and host in members
 
 #mainのlast_seenからタイムアウトになったユーザー削除・ユーザーがホストの場合ルームを閉じる
-def cleanup_timeouts(state: dict)-> None:
+def cleanup_timeouts(state: dict, sock: socket.socket) -> None:
     now = time.monotonic()
     last_seen = state.get("last_seen", {})
     rooms = state.get("rooms", {})
@@ -92,22 +152,34 @@ def cleanup_timeouts(state: dict)-> None:
     
     #last_seen,token_ip,token_userからも削除する
     for token in expired_token:
+        kick_token(state, sock, token, "timeout")
         last_seen.pop(token, None)
         state.get("token_ip", {}).pop(token, None)
-        state.get("token_user", {}).pop(token, None)
+        #state.get("token_user", {}).pop(token, None)
+        state.get("failures", {}).pop(token, None) 
 
     #ホストが存在しないルームをリストに追加
     closed_room = []
     for room_name, room in rooms.items():
         host = room.get("host_token")
-        if host is None:
+        members = room.get("members", set())
+        if host is None or host not in members:
             closed_room.append(room_name)
-            continue
 
-        host_last = last_seen.get(host, 0.0)
-        if now - host_last > TIMEOUT_SEC:
-            closed_room.append(room_name)
-    
     for room_name in closed_room:
         rooms.pop(room_name, None)
+
+def kick_token(state: dict, sock: socket.socket, token: str, reason: str):
+    addr = state.get("token_ip", {}).get(token)
+    if addr:
+        sock.sendto(f"DISCONNECTED: {reason}".encode("utf-8"), addr)
+
+    for room in state.get("rooms", {}).values():
+        room.get("members", set()).discard(token)
+
+    state.get("last_seen", {}).pop(token, None)
+    state.get("token_ip", {}).pop(token, None)
+    state.get("failures", {}).pop(token, None)
+
+
 

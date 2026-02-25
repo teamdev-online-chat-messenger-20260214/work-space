@@ -1,7 +1,7 @@
 import socket
 import threading
 
-def start_chat(token: str, room_name: str, udp_server_ip: int, udp_port: str):
+def start_chat(token: str, room_name: str, udp_server_ip: str, udp_port: int, state:dict):
    
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -9,10 +9,10 @@ def start_chat(token: str, room_name: str, udp_server_ip: int, udp_port: str):
     port = 0
     sock.bind((address, port))
 
-    username = input("username> ").strip()
+    username = state.get("token_user", {}).get(token)
 
     threading.Thread(target=receive_loop, args=(sock,), daemon=True).start()
-    join_packet = build_packet(token, room_name)
+    join_packet = build_packet(token, room_name, "@join")
     sock.sendto(join_packet, (udp_server_ip, udp_port))
 
     try:
@@ -20,18 +20,17 @@ def start_chat(token: str, room_name: str, udp_server_ip: int, udp_port: str):
             text = input(">")
             if text.strip() == "/quit":
                 break
-            packet = build_packet(username, text)
+            packet = build_packet(token, room_name, text)
             sock.sendto(packet, (udp_server_ip, udp_port))
     finally:
         sock.close()
 
 
 def receive_loop(sock):
-   while True:
-      data, _ = sock.recvfrom(4096)
-      parsed = parse_packet(data)
-      if parsed:
-         u, m = parsed
+    while True:
+        data, _ = sock.recvfrom(4096)
+        print(data.decode("utf-8", errors="replace"))
+
 
 def parse_packet(data: bytes):
    if not data:
@@ -53,7 +52,7 @@ def build_packet(token: str, room_name: str, text:str):
    msg = text.encode("utf-8")
    
    if len(room_en) > 255:
-      raise ValueError("token too long")
+      raise ValueError("room name too long")
    if len(token_en) > 255:
       raise ValueError("token too long")
     
@@ -63,4 +62,3 @@ def build_packet(token: str, room_name: str, text:str):
       raise ValueError("packet too long")
    
    return packet
-        
