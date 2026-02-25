@@ -1,7 +1,9 @@
+
 import socket
 import threading
 import sys
 import os
+
 
 SERVER_ADDRESS = "127.0.0.1" #変更可能 テスト用のlocalhost
 TCP_PORT = 9001 #TCPとUDPのPORTは定数化
@@ -15,6 +17,9 @@ CLIENT_UDP_PORT = 10000 + (os.getpid() % 1000)
 STATE_REQUEST = 0
 STATE_RESPONSE = 1
 STATE_COMPLETE = 2
+
+#develop-chat-udp
+#token = client_room_management.tcp_room_manage()
 
 #============
 # TCP_control
@@ -239,3 +244,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
