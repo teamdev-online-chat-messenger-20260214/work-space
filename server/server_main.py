@@ -1,15 +1,9 @@
 # develop-chat-udp
 def main():
+    rooms = {}
     state = {
-        "rooms" : {
-            "roomA" : {
-                "host_token":"t1",
-                "members":{"t1", "t2"},
-                },
-            "roomB" : {
-                "host_token":"t3",
-                "members": {"t3", "t4"}}
-        },
+        #部屋名:{"host_token":"ホストトークン", "members":{"トークン", "トークン"}}
+        "rooms" : rooms,
 
         # トークン：ユーザー名
         "token_user" : {
@@ -21,9 +15,13 @@ def main():
 
         },
 
-        #トークン：最終じ時間
+        #トークン：最終時間
         "last_seen" :{
    
+        },
+
+        "failures":{
+
         }
 
     }
