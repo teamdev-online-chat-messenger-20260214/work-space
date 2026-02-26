@@ -18,7 +18,7 @@ state = {
         "t4" : "user4"
     },
 
-    "token_ip" : {
+    "ip_address" : {
         "t1" : "127.0.0.1",
         "t2" : "127.0.0.1",
         "t3" : "127.0.0.1",
@@ -30,6 +30,13 @@ state = {
         "t2": 0.0,
         "t3": 0.0,
         "t4": 0.0,
+    },
+
+    "failure" :{
+            "t1": 0,
+            "t2": 0,
+            "t3": 0,
+            "t4": 0,
     }
 }
 
@@ -61,3 +68,35 @@ import client_room_management, client_chat_management
 
 
 token = client_room_management.tcp_room_manage()
+
+
+# develop-chat-udp
+def main():
+    state = {
+        "rooms" : {
+            "roomA" : {
+                "host_token":"t1",
+                "members":{"t1", "t2"},
+                },
+            "roomB" : {
+                "host_token":"t3",
+                "members": {"t3", "t4"}}
+        },
+
+        # トークン：ユーザー名
+        "token_user" : {
+
+        },
+
+        # トークン：（ip:port）
+        "token_ip" : {
+
+        },
+
+        #トークン：最終時間
+        "last_seen" :{
+   
+        }
+
+    }
+
