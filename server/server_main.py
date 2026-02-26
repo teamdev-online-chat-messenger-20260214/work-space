@@ -115,15 +115,44 @@ def handle_tcp(connection, state):
             # ===== operation 2: join =====
             elif operation == 2:
 
-                #存在しない部屋を確認
+                # ルーム一覧要求 
+                if room_name == "":
+                    room_list = ",".join(state["rooms"].keys())
+                    payload = room_list.encode("utf-8")
+                    header_res = build_header(
+                        0,
+                        operation,
+                        STATE_RESPONSE,
+                        len(payload)
+                    )
+                    connection.sendall(header_res + payload)
+                    return
+
+                # 存在チェック 
                 if room_name not in state["rooms"]:
                     error_payload = b"NO_ROOM"
-                    header_err = build_header(len(room_name.encode()), operation, STATE_RESPONSE, len(error_payload))
+                    header_err = build_header(
+                        len(room_name.encode()),
+                        operation,
+                        STATE_RESPONSE,
+                        len(error_payload)
+                    )
                     connection.sendall(header_err + room_name.encode() + error_payload)
                     return
 
-                state["rooms"][room_name]["members"].add(token)
+                if payload == b"CHECK":
+                    ok_payload = b"EXISTS"
+                    header = build_header(
+                        len(room_name.encode()),
+                        operation,
+                        STATE_RESPONSE,
+                        len(ok_payload)
+                    )
+                    connection.sendall(header + room_name.encode() + ok_payload)
+                    return
 
+                #通常参加
+                state["rooms"][room_name]["members"].add(token)
             else:
                 return
 
