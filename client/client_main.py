@@ -50,6 +50,29 @@ def tcp_room_manage():
             return None, None
 
         operation = int(operation_str)
+
+        #create時に既存ルーム一覧を取得
+        if operation in(1, 2):
+            header = protocol_header(0, 2, STATE_REQUEST, 0)
+            sock.sendall(header)
+
+            header_res = recv_exact(sock, 32)
+            data_len = int.from_bytes(header_res[3:], "big")
+
+            rooms = recv_exact(sock, data_len).decode("utf-8")
+
+            print("existing rooms:")
+            if rooms:
+                for r in rooms.split(","):
+                    print(" -", r)
+            else:
+                print(" (none)")
+
+        # いったんTCPを閉じて再接続
+        sock.close()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((SERVER_ADDRESS, TCP_PORT))
+
         room_name = input("room name > ").strip()
         user_name = input("user name > ").strip()
 
@@ -148,8 +171,8 @@ def receive_loop(sock, stop_event):
         if not data:
             continue
 
-        print(data)#デバックコード
-        print(data.hex())#デバックコード
+        #print(data)#デバックコード
+        #print(data.hex())#デバックコード
 
         # 通知
         if data.startswith(b"ROOM_CLOSED") or data.startswith(b"DISCONNECTED") or data.startswith(b"SERVER_SHUTDOWN"):
