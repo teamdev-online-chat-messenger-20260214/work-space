@@ -16,7 +16,7 @@ STATE_RESPONSE = 1
 STATE_COMPLETE = 2
 
 FAILURE_LIMIT = 3
-TIMEOUT_SEC = 6000
+TIMEOUT_SEC = 10
 
 #指定バイト数を必ず受信する関数
 def recv_exact(sock, size):
@@ -181,6 +181,7 @@ def handle_tcp(connection, state):
 
 #退出処理
 def kick_token(state, sock, token, reason):
+    print("STATE ID:", id(state))
     with state_lock:
 
         address = state.get("token_ip", {}).get(token)
@@ -192,36 +193,43 @@ def kick_token(state, sock, token, reason):
 
         for room_name, room in list(state["rooms"].items()):  # ★ list必須
             room["members"].discard(token)
+            print("ROOM:", room_name) #テストコード
+            print("HOST_TOKEN:", room.get("host_token"))#テストコード
+            print("QUIT_TOKEN:", token)#テストコード
             #ホスト削除
             if room.get("host_token") == token:
                 closed_rooms.append(room_name)
             #ルーム削除、全員に通知
         for room_name in closed_rooms:
-            room = state["rooms"].get(room_name)
+            room = state["rooms"].pop(room_name, None)
             if not room:
                 continue
-
             for member_token in room["members"]:
                 address = state["token_ip"].get(member_token)
                 if address:
                     sock.sendto(f"ROOM_CLOSED: {room_name}". encode(), address)
-
-            del state["rooms"][room_name]
-
         state["token_user"].pop(token, None)
         state["last_seen"].pop(token, None)
         state["token_ip"].pop(token, None)
         state["failures"].pop(token, None)
 
-
 def cleanup_timeouts(state: dict, sock: socket.socket):
     while True:
         now = time.monotonic()
+
+        tokens_to_kick = []
+
         with state_lock:
             for token, last in list(state["last_seen"].items()):
                 if now - last > TIMEOUT_SEC:
                     print(f"timeout: {token}")
-                    kick_token(state, sock, token, "timeout")
+                    tokens_to_kick.append(token)
+        
+        for token in tokens_to_kick:
+            print(f"timeout: {token}")
+            kick_token(state, sock, token, "timeout")
+
+        time.sleep(5)
         time.sleep(5)
 
 
@@ -246,6 +254,8 @@ def start_udp(state, sock):
             continue
 
         room_name, token, message = parsed
+
+        token_to_kick = None
 
         with state_lock:  # Lock追加
             if token not in state["token_user"]:
@@ -282,12 +292,19 @@ def start_udp(state, sock):
                 continue
             #生存確認
             state["last_seen"][token] = time.monotonic()
+            
+            print("RAW MESSAGE:", repr(message))
 
             if message == "@join":
                 room["members"].add(token)
                 continue
-
-            members = room["members"]
+            
+            #即時ルーム退出
+            if message == "@quit":
+                token_to_kick = token
+                continue
+            else:
+                members = room["members"]
 
             if token not in members:
                 continue
@@ -304,6 +321,10 @@ def start_udp(state, sock):
                 addr = state["token_ip"].get(t)
                 if addr:
                     sock.sendto(packet, addr)
+        
+        if token_to_kick:
+            kick_token(state, sock, token_to_kick, "quit")
+            continue
 
 #ユーザーから受け取ったデータをパースする
 def parse_from_client(data: bytes):
