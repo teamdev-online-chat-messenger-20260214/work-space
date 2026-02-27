@@ -15,7 +15,7 @@ STATE_RESPONSE = 1
 STATE_COMPLETE = 2
 
 FAILURE_LIMIT = 3
-TIMEOUT_SEC = 10
+TIMEOUT_SEC = 100
 
 #指定バイト数を必ず受信する関数
 def recv_exact(sock, size):
@@ -214,6 +214,7 @@ def kick_token(state, sock, token, reason):
 
 def cleanup_timeouts(state: dict, sock: socket.socket):
     while True:
+        print("=====cleanup_timeouts=====")
         now = time.monotonic()
 
         tokens_to_kick = []
@@ -228,6 +229,7 @@ def cleanup_timeouts(state: dict, sock: socket.socket):
             print(f"timeout: {token}")
             kick_token(state, sock, token, "timeout")
 
+        print(state)
         time.sleep(5)
         time.sleep(5)
 
@@ -301,28 +303,28 @@ def start_udp(state, sock):
             #即時ルーム退出
             if message == "@quit":
                 token_to_kick = token
-                continue
             else:
                 members = room["members"]
 
-            if token not in members:
-                continue
-
-            sender = state["token_user"].get(token, token)
-            out = message.encode("utf-8")
-
-            name_bytes = sender.encode("utf-8")
-            packet = bytes([len(name_bytes)]) + name_bytes + out
-
-            for t in members:
-                if t == token:
+                if token not in members:
                     continue
-                addr = state["token_ip"].get(t)
-                if addr:
-                    sock.sendto(packet, addr)
+
+                sender = state["token_user"].get(token, token)
+                out = message.encode("utf-8")
+
+                name_bytes = sender.encode("utf-8")
+                packet = bytes([len(name_bytes)]) + name_bytes + out
+
+                for t in members:
+                    if t == token:
+                        continue
+                    addr = state["token_ip"].get(t)
+                    if addr:
+                        sock.sendto(packet, addr)
         
         if token_to_kick:
             kick_token(state, sock, token_to_kick, "quit")
+            print(state)
             continue
 
 #ユーザーから受け取ったデータをパースする
