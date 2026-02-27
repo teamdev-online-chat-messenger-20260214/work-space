@@ -1,32 +1,37 @@
-
 import socket
 import threading
 import sys
 import os
 
-
-SERVER_ADDRESS = "127.0.0.1" #変更可能 テスト用のlocalhost
-TCP_PORT = 9001 #TCPとUDPのPORTは定数化
-UDP_PORT = 9001
-STREAM_RATE = 4096
+SERVER_ADDRESS = "127.0.0.1"
+TCP_PORT = 9001
+UDP_PORT = 9002
 MESSAGE_OK = "OK"
 
-#クライアントUDP_PORTを作成。
 CLIENT_UDP_PORT = 10000 + (os.getpid() % 1000)
-#STATEを定数化
+
 STATE_REQUEST = 0
 STATE_RESPONSE = 1
 STATE_COMPLETE = 2
 
-#develop-chat-udp
-#token = client_room_management.tcp_room_manage()
+#指定バイト数を必ず受信する関数
+def recv_exact(sock, size):
+    data = b''
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("connection closed while receiving")
+        data += chunk
+    return data
 
-#============
-# TCP_control
-#============
+
 def protocol_header(room_name_length, operation, state, data_length):
-    return room_name_length.to_bytes(1, 'big') + operation.to_bytes(1, 'big') + state.to_bytes(1, 'big') + data_length.to_bytes(29,"big")
+    return (room_name_length.to_bytes(1, 'big') + operation.to_bytes(1, 'big') + state.to_bytes(1, 'big') + data_length.to_bytes(29, "big"))
 
+
+# ============
+# TCP CONTROL
+# ============
 def tcp_room_manage():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -39,209 +44,200 @@ def tcp_room_manage():
         sys.exit(1)
 
     try:
-        #input
-        operation_str = input('type 1:create room, 2:join room >')
-        if operation_str != '1' and operation_str != '2':
-            raise Exception('invalid input.')
+        operation_str = input("1:create room  2:join room > ").strip()
+        if operation_str not in ("1", "2"):
+            print("invalid input")
+            return None, None
+
         operation = int(operation_str)
-        room_name = input('type room name: ')
-        user_name = input('type user name: ')
-        room_name_bits = room_name.encode('utf_8')
-        user_name_bits = user_name.encode('utf_8')
-        #UDPポート番号を追加。payloadにusernameと合わせてprotocol_headerの最後の引数に代入しています。
+
+        #create時に既存ルーム一覧を取得
+        if operation in(1, 2):
+            header = protocol_header(0, 2, STATE_REQUEST, 0)
+            sock.sendall(header)
+
+            header_res = recv_exact(sock, 32)
+            data_len = int.from_bytes(header_res[3:], "big")
+
+            rooms = recv_exact(sock, data_len).decode("utf-8")
+
+            print("existing rooms:")
+            if rooms:
+                for r in rooms.split(","):
+                    print(" -", r)
+            else:
+                print(" (none)")
+
+        # いったんTCPを閉じて再接続
+        sock.close()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((SERVER_ADDRESS, TCP_PORT))
+
+        room_name = input("room name > ").strip()
+        user_name = input("user name > ").strip()
+
+        room_bytes = room_name.encode("utf-8")
+        user_bytes = user_name.encode("utf-8")
+
         udp_port_bytes = CLIENT_UDP_PORT.to_bytes(2, "big")
-        payload = user_name_bits + udp_port_bytes
-        #上記にstateを定数化して可読性を高めました。下記のprotocol_headerに直接書き込んでいます。
-        #state = 0
+        payload = user_bytes + udp_port_bytes
 
-        if len(room_name_bits) > pow(2, 8):
-            raise Exception('room name is too long.')
-        
-        if len(payload) > pow(2, 29):
-            raise Exception('user name is too long.')
-        
-        header = protocol_header(len(room_name_bits), operation, STATE_REQUEST, len(payload))
+        header = protocol_header(len(room_bytes), operation, STATE_REQUEST, len(payload))
 
-        sock.send(header)
-        sock.send(room_name_bits)
-        data = payload
-        data_length = len(payload)
-        while data_length>0:
-            print('sending...')
-            sock.send(data)
-            data_length -= STREAM_RATE
+        sock.sendall(header)
+        sock.sendall(room_bytes)
+        sock.sendall(payload)
 
-        sock.settimeout(2)
+    
+        #RESPONSE受信
+        header = recv_exact(sock, 32)
+        room_len = int.from_bytes(header[:1], "big")
+        op_response = int.from_bytes(header[1:2], "big")
+        state = int.from_bytes(header[2:3], "big")
+        data_len = int.from_bytes(header[3:], "big")
 
-        #response
-        try:
-            while True:
-                header = sock.recv(32)
-                room_name_length = int.from_bytes(header[:1], "big")
-                operation = int.from_bytes(header[1:2], "big")
-                state = int.from_bytes(header[2:3], "big")
-                data_length = int.from_bytes(header[3:], "big")
-                print('response-operation: {}'.format(operation))
-                print('response-state: {}'.format(state))
+        #operation一致確認
+        if op_response != operation:
+            print("invalid operation (response)")
+            return None, None
 
-                room_name_bits = sock.recv(room_name_length)
-                room_name = room_name_bits.decode('utf-8')
-                print('response-room name: {}'.format(room_name))
-                print('response-data length: {}'.format(data_length))
+        #state確認
+        if state != STATE_RESPONSE:
+            print("invalid state (expected RESPONSE)")
+            return None, None
 
-                arr_data_bits = []
-                while data_length>0:
-                    response_data_bits = sock.recv(data_length if data_length <= STREAM_RATE else STREAM_RATE)
-                    arr_data_bits.append(response_data_bits)
-                    #-STREAM_RATEから変更
-                    data_length -=  len(response_data_bits)
+        room_name = recv_exact(sock, room_len).decode("utf-8")
+        data = recv_exact(sock, data_len).decode("utf-8")
 
-                data = b''.join(arr_data_bits).decode('utf-8')
-                #data = data_bits.decode('utf-8')
-                print('response-data: {}'.format(data))
+        if data != MESSAGE_OK:
+            print("server error:", data)
+            return None, None
 
-                if(data != MESSAGE_OK):
-                    print('response-error')
-                    break
-                #print(data)
-                break
-        except(TimeoutError):
-            print('socket timeout')
 
-        sock.settimeout(2)
+        #TOKEN受信
+        header = recv_exact(sock, 32)
+        room_len = int.from_bytes(header[:1], "big")
+        op_token = int.from_bytes(header[1:2], "big")
+        state = int.from_bytes(header[2:3], "big")
+        data_len = int.from_bytes(header[3:], "big")
 
-        #receive token
-        try:
-            while True:
-                header = sock.recv(32)
-                room_name_length = int.from_bytes(header[:1], "big")
-                operation = int.from_bytes(header[1:2], "big")
-                state = int.from_bytes(header[2:3], "big")
-                data_length = int.from_bytes(header[3:], "big")
-                print('token-operation: {}'.format(operation))
-                print('token-state: {}'.format(state))
+        #operation一致確認
+        if op_token != operation:
+            print("invalid operation (token)")
+            return None, None
 
-                room_name_bits = sock.recv(room_name_length)
-                room_name = room_name_bits.decode('utf-8')
-                print('token-room name: {}'.format(room_name))
-                print('token-data length: {}'.format(data_length))
+        #COMPLETE確認
+        if state != STATE_COMPLETE:
+            print("invalid state (expected COMPLETE)")
+            return None, None
 
-                arr_data_bits = []
-                while data_length>0:
-                    response_data_bits = sock.recv(data_length if data_length <= STREAM_RATE else STREAM_RATE)
-                    arr_data_bits.append(response_data_bits)
-                    data_length -= len(response_data_bits)
+        room_name = recv_exact(sock, room_len).decode("utf-8")
+        token = recv_exact(sock, data_len).decode("utf-8")
 
-                data = b''.join(arr_data_bits).decode('utf-8')
-                #data = data_bits.decode('utf-8')
-                print('token-data: {}'.format(data))
-                
-                print(data)
-                return data
+        return token, room_name
 
-        except(TimeoutError):
-            print('socket timeout')
+    except (ConnectionError, socket.timeout) as e:
+        print("connection error:", e)
+        return None, None
+
     finally:
-        print('closing socket')
         sock.close()
 
 
+# =============
+# UDP CONTROL
+# =============
+def build_packet(token, room_name, text):
+    room_en = room_name.encode("utf-8")
+    token_en = token.encode("utf-8")
+    msg = text.encode("utf-8")
 
-#============
-# UDP_control
-#============
-              #変更前 token: str, room_name: str, udp_server_ip: int, udp_port: str
+    packet = (bytes([len(room_en)]) + bytes([len(token_en)]) + room_en + token_en + msg)
+
+    if len(packet) > 4096:
+        raise ValueError("packet too long")
+
+    return packet
+
+def receive_loop(sock, stop_event):
+    my_name = None
+
+    while not stop_event.is_set():
+        try:
+            data, _ = sock.recvfrom(4096)
+        except OSError:
+            break
+
+        if not data:
+            continue
+
+        #print(data)#デバックコード
+        #print(data.hex())#デバックコード
+
+        # 通知
+        if data.startswith(b"ROOM_CLOSED") or data.startswith(b"DISCONNECTED") or data.startswith(b"SERVER_SHUTDOWN"):
+            print(data.decode("utf-8", errors="replace"))
+            stop_event.set()
+            break
+
+        # UDPチャット解析
+        if len(data) < 1:
+            continue
+
+        name_len = data[0]
+        if len(data) < 1 + name_len:
+            continue
+
+        # user = 名前
+        user = data[1:1+name_len].decode("utf-8", errors="replace")
+
+        # msg = 残り
+        msg = data[1+name_len:].decode("utf-8", errors="replace")
+
+        # ★自分のメッセージは表示しない
+        if my_name and user == my_name:
+            continue
+
+        print(f"{user}: {msg}")
+
 def start_chat(token, room_name):
-   
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(('', CLIENT_UDP_PORT))
 
-    #address = ''
-    #port = 0
-    #ポート番号は定数を使用
-    sock.bind(('', CLIENT_UDP_PORT ))
+    stop_event = threading.Event()
+    threading.Thread(target=receive_loop, args=(sock, stop_event), daemon=True).start()
 
-    #TCPの方で定義済み
-    #username = input("username> ").strip()
-
-    threading.Thread(target=receive_loop, args=(sock,), daemon=True).start()
-    join_packet = build_packet(token, room_name, "")
+    # ★JOINを必ず送る★
+    join_packet = build_packet(token, room_name, "@join")
     sock.sendto(join_packet, (SERVER_ADDRESS, UDP_PORT))
 
     try:
-        while True:
-            text = input(">")
+        while not stop_event.is_set():
+            text = input("> ")
             if text.strip() == "/quit":
                 break
+
             packet = build_packet(token, room_name, text)
             sock.sendto(packet, (SERVER_ADDRESS, UDP_PORT))
+
     finally:
+        stop_event.set()
         sock.close()
+        print("chat ended")
 
-
-def receive_loop(sock):
-   while True:
-      data, _ = sock.recvfrom(4096)
-      #perse_packet関数と合併。
-      if not data:
-            continue
-      n = data[0]
-      if 1 + n > len(data):
-        continue
-
-      user = data[1:1+n].decode("utf-8", errors="replace")
-      msg = data[1+n:].decode("utf-8", errors="replace")
-
-      print(f"{user}: {msg}")
-      
-      #parsed = parse_packet(data)
-      #if parsed:
-      #u, m = parsed
-
-'''
-def parse_packet(data: bytes):
-   if not data:
-       return None
-   
-   n = data[0]
-   if 1 + n > len(data):
-      return None
-   u = data[1:1+n].decode("utf-8", errors="replace")
-   m = data[1+n:].decode("utf-8", errors="replace")
-
-   return u,m
-'''
-
-def build_packet(token, room_name, text):
-   
-   room_en = room_name.encode("utf-8")
-   token_en = token.encode("utf-8")
-   msg = text.encode("utf-8")
-   
-   #1byte制限があるため不要
-   #if len(room_en) > 255:
-      #raise ValueError("token too long")
-   #if len(token_en) > 255:
-      #raise ValueError("token too long")
-    
-   packet = (bytes([len(room_en)]) + bytes([len(token_en)]) + room_en + token_en + msg)
-
-   if len(packet) > 4096:
-      raise ValueError("packet too long")
-   
-   return packet
-
-#============ 
-# MAIN 
-#============  
+# =============
+# UDP CONTROL
+# =============
 def main():
     token, room_name = tcp_room_manage()
-    if token is None:
+
+    if not token:
         print("failed")
         return
 
-    print("joined room")
+    print("joined:", room_name)
     start_chat(token, room_name)
+
 
 if __name__ == "__main__":
     main()
-
