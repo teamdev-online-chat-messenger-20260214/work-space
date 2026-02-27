@@ -215,6 +215,9 @@ def start_chat(token, room_name):
         while not stop_event.is_set():
             text = input("> ")
             if text.strip() == "/quit":
+                #即時ルーム退室
+                quit_packet = build_packet(token, room_name, "@quit")
+                sock.sendto(quit_packet, (SERVER_ADDRESS, UDP_PORT))
                 break
 
             packet = build_packet(token, room_name, text)
