@@ -16,7 +16,7 @@ STATE_RESPONSE = 1
 STATE_COMPLETE = 2
 
 FAILURE_LIMIT = 3
-TIMEOUT_SEC = 30
+TIMEOUT_SEC = 100
 
 #指定バイト数を必ず受信する関数
 def recv_exact(sock, size):
@@ -221,6 +221,7 @@ def kick_token(state, sock, token, reason):
 
 def cleanup_timeouts(state: dict, sock: socket.socket):
     while True:
+        print("=====cleanup_timeouts=====")
         now = time.monotonic()
 
         tokens_to_kick = []
@@ -235,6 +236,7 @@ def cleanup_timeouts(state: dict, sock: socket.socket):
             print(f"timeout: {token}")
             kick_token(state, sock, token, "timeout")
 
+        print(state)
         time.sleep(5)
         time.sleep(5)
 
@@ -308,7 +310,6 @@ def start_udp(state, sock):
             #即時ルーム退出
             if message == "@quit":
                 token_to_kick = token
-                
             else:
                 members = room["members"]
 
@@ -330,6 +331,7 @@ def start_udp(state, sock):
         
         if token_to_kick:
             kick_token(state, sock, token_to_kick, "quit")
+            print(state)
             continue
 
 #ユーザーから受け取ったデータをパースする
