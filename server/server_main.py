@@ -16,7 +16,7 @@ STATE_RESPONSE = 1
 STATE_COMPLETE = 2
 
 FAILURE_LIMIT = 3
-TIMEOUT_SEC = 10
+TIMEOUT_SEC = 30
 
 #指定バイト数を必ず受信する関数
 def recv_exact(sock, size):
@@ -37,7 +37,7 @@ def create_state():
         "failures": {}
     }
 
-state_lock = threading.Lock() #Lock追加
+state_lock = threading.RLock() #Lock追加
 
 def build_header(room_size, operation, state, payload_size):
     return (
@@ -206,12 +206,18 @@ def kick_token(state, sock, token, reason):
                 continue
             for member_token in room["members"]:
                 address = state["token_ip"].get(member_token)
+                print(f"  member={member_token}, address={address}")
                 if address:
                     sock.sendto(f"ROOM_CLOSED: {room_name}". encode(), address)
+                state["token_user"].pop(member_token, None)
+                state["last_seen"].pop(member_token, None)
+                state["token_ip"].pop(member_token, None)
+                state["failures"].pop(member_token, None)
         state["token_user"].pop(token, None)
         state["last_seen"].pop(token, None)
         state["token_ip"].pop(token, None)
         state["failures"].pop(token, None)
+        print("ROOMS NOW:", list(state["rooms"].keys()))
 
 def cleanup_timeouts(state: dict, sock: socket.socket):
     while True:
@@ -302,25 +308,25 @@ def start_udp(state, sock):
             #即時ルーム退出
             if message == "@quit":
                 token_to_kick = token
-                continue
+                
             else:
                 members = room["members"]
 
-            if token not in members:
-                continue
-
-            sender = state["token_user"].get(token, token)
-            out = message.encode("utf-8")
-
-            name_bytes = sender.encode("utf-8")
-            packet = bytes([len(name_bytes)]) + name_bytes + out
-
-            for t in members:
-                if t == token:
+                if token not in members:
                     continue
-                addr = state["token_ip"].get(t)
-                if addr:
-                    sock.sendto(packet, addr)
+
+                sender = state["token_user"].get(token, token)
+                out = message.encode("utf-8")
+
+                name_bytes = sender.encode("utf-8")
+                packet = bytes([len(name_bytes)]) + name_bytes + out
+
+                for t in members:
+                    if t == token:
+                        continue
+                    addr = state["token_ip"].get(t)
+                    if addr:
+                        sock.sendto(packet, addr)
         
         if token_to_kick:
             kick_token(state, sock, token_to_kick, "quit")
