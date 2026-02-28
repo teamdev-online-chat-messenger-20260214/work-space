@@ -1,3 +1,4 @@
+
 import socket
 import os
 import time
@@ -36,7 +37,7 @@ def create_state():
         "failures": {}
     }
 
-state_lock = threading.Lock() #Lock追加
+state_lock = threading.RLock() #Lock追加
 
 def build_header(room_size, operation, state, payload_size):
     return (
@@ -205,12 +206,18 @@ def kick_token(state, sock, token, reason):
                 continue
             for member_token in room["members"]:
                 address = state["token_ip"].get(member_token)
+                print(f"  member={member_token}, address={address}")
                 if address:
                     sock.sendto(f"ROOM_CLOSED: {room_name}". encode(), address)
+                state["token_user"].pop(member_token, None)
+                state["last_seen"].pop(member_token, None)
+                state["token_ip"].pop(member_token, None)
+                state["failures"].pop(member_token, None)
         state["token_user"].pop(token, None)
         state["last_seen"].pop(token, None)
         state["token_ip"].pop(token, None)
         state["failures"].pop(token, None)
+        print("ROOMS NOW:", list(state["rooms"].keys()))
 
 def cleanup_timeouts(state: dict, sock: socket.socket):
     while True:

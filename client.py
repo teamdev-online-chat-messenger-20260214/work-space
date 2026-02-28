@@ -214,6 +214,8 @@ def start_chat(token, room_name):
     try:
         while not stop_event.is_set():
             text = input("> ")
+            if stop_event.is_set():  # ★input後に再チェック
+                break
             if text.strip() == "/quit":
                 #即時ルーム退室
                 quit_packet = build_packet(token, room_name, "@quit")
